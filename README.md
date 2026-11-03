@@ -1,5 +1,10 @@
 # 华硕主板 BIOS 下载工具
 
+[![Release](https://img.shields.io/github/v/release/355744444-source/asus-bios-downloader?label=release&color=d71921)](https://github.com/355744444-source/asus-bios-downloader/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078d4)](#)
+[![Python](https://img.shields.io/badge/python-3.11%2B-3776ab)](#)
+[![Data](https://img.shields.io/badge/catalog-910%20%E6%AC%BE%E4%B8%BB%E6%9D%BF-2ea043)](#)
+
 > ASUS Motherboard BIOS Downloader — Windows 桌面工具，三栏浏览器式界面，内置华硕官网全部在售主板目录，选中型号即列出 BIOS 历史版本并一键下载、SHA-256 校验。
 
 ![界面截图](docs/screenshot.png)
@@ -36,7 +41,7 @@
 
 ## 运行
 
-**直接用**（无需 Python）：从 Releases 下载 `华硕主板BIOS下载工具.exe`，双击运行。首次建目录需联网。
+**直接用**（无需 Python）：到 [Releases](https://github.com/355744444-source/asus-bios-downloader/releases/latest) 下载 `asus-bios-downloader-v2.3.0.exe`，双击运行。首次建目录需联网。
 
 **从源码跑**：
 
