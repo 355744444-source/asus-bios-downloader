@@ -1,0 +1,21 @@
+# UTF-8
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=(2,3,0,0), prodvers=(2,3,0,0), mask=0x3f,
+                    flags=0, OS=262148, fileType=1, subtype=0, date=(0,0)),
+  kids=[
+    StringFileInfo([
+      StringTable(u'0804', [
+        StringStruct(u'CompanyName', u'江苏振远智能科技有限公司'),
+        StringStruct(u'FileDescription', u'华硕主板 BIOS 目录下载工具'),
+        StringStruct(u'FileVersion', u'2.3.0.0'),
+        StringStruct(u'InternalName', u'ASUS_MB_BIOS_Downloader'),
+        StringStruct(u'OriginalFilename', u'华硕主板BIOS下载工具.exe'),
+        StringStruct(u'ProductName', u'华硕主板 BIOS 下载工具'),
+        StringStruct(u'ProductVersion', u'2.3.0.0'),
+        StringStruct(u'LegalCopyright', u'Copyright © 2026 江苏振远智能科技有限公司'),
+        StringStruct(u'Comments', u'华硕官网主板目录浏览（www.asus.com 全球站 / www.asus.com.cn 中国站 / rog.asus.com ROG 站三数据源，Intel/AMD 分平台、按芯片组归类）与 BIOS 下载工具')
+      ])
+    ]),
+    VarFileInfo([VarStruct(u'Translation', [2052, 1204])])
+  ]
+)

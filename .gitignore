@@ -1,0 +1,41 @@
+# ---------- 构建产物 ----------
+build/
+dist/
+*.spec.bak
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+
+# ---------- 打包/交付物（体积大，走 Release 分发） ----------
+*.exe
+*.zip
+*.7z
+*.rar
+*.part
+
+# ---------- 运行时生成 ----------
+# 用户配置（含本机下载目录等个人信息）
+asus_bios_checker.cfg
+# 运行日志与校验结果
+*.log
+_v_audit_result.txt
+_v_frozen_result.txt
+
+# ---------- 本地历史与一次性探针 ----------
+archive/
+_ui_*.png
+_ui_before_*.png
+_crop_*.png
+_r?.txt
+_rm.txt
+_ra.txt
+
+# ---------- 编辑器/系统 ----------
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# 根目录历史对照图（只在 docs/ 下保留需要的副本）
+/*.png
