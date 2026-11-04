@@ -56,7 +56,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
 APP_TITLE = "华硕主板 BIOS 下载工具"
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.3.1"
 APP_COMPANY = "江苏振远智能科技有限公司"
 
 # ---------------------------------------------------------------- 常量
@@ -92,10 +92,17 @@ SRC_LABEL = {"com": "华硕全球站 www.asus.com",
              "rog": "ROG 玩家国度站 rog.asus.com"}
 
 IMPERSONATE = "chrome124"
-# DNS 自愈（v2.3.3）：系统 DNS 无法解析官网域名（路由器/运营商递归 DNS 偶发故障，curl error 6/28）时，
+# DNS 自愈（v2.3.0 起，v2.3.1 修补兜底链）：系统 DNS 无法解析官网域名（路由器/运营商递归 DNS 偶发故障，curl error 6/28）时，
 # 自动改用 DoH 兜底 —— IP 直连不依赖系统 DNS。国内可直连的两个 DoH 服务，依次尝试。
 DOH_URLS = ("https://223.5.5.5/dns-query",    # 阿里公共 DNS（RFC 8484）
             "https://1.12.12.12/dns-query")   # 腾讯 DNSPod（RFC 8484）
+
+# 目录更新失败后的自动重试等待（秒）。v2.3.1
+# 3 个解析通道全部试完只要一两秒，而「开机自启 / 睡眠唤醒」时网络栈往往要十几秒才
+# 就绪 —— 旧版试完就永久停在失败态，只能等用户自己发现并手动点 ↻。这里按退避自动
+# 重试，覆盖住网络就绪窗口；总计约 3 分钟，仍失败则交给用户手动刷新。
+CAT_RETRY_DELAYS = (5, 15, 45, 120)
+
 CATALOG_FILE = "asus_mb_catalog.json"     # 本地目录缓存
 CFG_FILE = "asus_bios_checker.cfg"        # 用户设置（刷新间隔 / 显示范围）
 # ---- 目录树列宽自适应参数（v2.1.1 / v2.0.1 收口）
@@ -639,28 +646,81 @@ def _is_dns_error(e):
             or "dns" in type(e).__name__.lower() or "esolv" in m)
 
 
-def _cr_get_dns_safe(url, **kw):
-    """带 DNS 自愈的 GET：系统 DNS 解析失败（curl error 6/28）时自动改用 DoH 重试。
+def _net_err_text(e):
+    """网络异常 → 一句人能读的话（状态栏用）。完整异常由调用方写日志。"""
+    s = str(e or e.__class__.__name__)
+    low = s.lower()
+    if _is_dns_error(e):
+        return "域名解析失败（本机 DNS / 路由器无响应）"
+    if "timed out" in low or "timeout" in low:
+        return "连接超时（网络较慢或被拦截）"
+    if "ssl" in low or "tls" in low or "certificate" in low:
+        return "TLS 握手失败（可能被网络设备干扰）"
+    if "refused" in low:
+        return "连接被拒绝（目标端口不通）"
+    if "reset" in low or "closed" in low:
+        return "连接被中断"
+    if "proxy" in low:
+        return "代理不可用"
+    if low.startswith("http ") or "http " in low[:8]:
+        return "请求失败（%s）" % s.strip()
+    return s[:60]
 
-    用法与 curl_cffi requests.get 一致（headers / stream / timeout / impersonate 等命名参数原样透传）。
-    先走系统 DNS（快）；解析失败时依次改用 DOH_URLS 里的 DoH（IP 直连，不依赖系统 DNS）。
-    非 DNS 类异常立即上抛；DNS 兜底全部失败时抛出带中文说明的 RuntimeError。
+
+def _dns_fallback(attempt, retry=2, tag="网络"):
+    """统一解析兜底：系统 DNS 重试 → 各 DoH 服务器，直到成功或试完。
+
+    attempt(doh_url) 执行一次请求，失败抛异常；doh_url 为 None 表示走系统 DNS。
+
+    v2.3.1：修复旧实现的两个洞 ——
+      ① 旧版一旦某个 DoH 抛非解析类异常（SSL 握手失败 / 连接被重置，国内对
+         223.5.5.5:443 做干扰时很常见）就立刻 raise，**后面的 DoH 永远走不到**；
+      ② 旧版 DNS 失败后仍把剩余 retry 次数耗在系统 DNS 上，白等一个连接超时。
+    现在：只要出现过解析类失败，就进入「通道全试完」模式，中途任何异常都只记录不改道。
     """
-    from curl_cffi import requests as cr
     last = None
-    chain = (None,) + DOH_URLS          # None = 走系统 DNS
-    for i, doh in enumerate(chain):
+    dns_seen = False
+    tried = []
+    # 阶段一：系统 DNS（快，且能吃到系统缓存）。非解析类故障就地重试，不进 DoH。
+    for _ in range(max(1, retry)):
+        tried.append("系统DNS")
         try:
-            if doh is None:
-                return cr.get(url, **kw)
-            return cr.get(url, doh_url=doh, **kw)
+            return attempt(None)
         except Exception as e:
             last = e
-            if not _is_dns_error(e):
-                raise                 # 非 DNS 问题（超时/连接/证书等）不改路径，原样上抛
-            if i < len(chain) - 1:
-                time.sleep(0.6)
-    raise RuntimeError("网络 DNS 解析失败（已自动尝试备用解析仍不通）：%r" % (last,))
+            dns_seen = dns_seen or _is_dns_error(e)
+            if dns_seen:
+                break                 # 已判定解析故障：剩余重试只会白等超时，直接换通道
+            time.sleep(0.5)
+    if not dns_seen:
+        raise RuntimeError(_net_err_text(last)) from None
+    # 阶段二：逐个 DoH（IP 直连，不依赖系统 DNS），试完为止。
+    for doh in DOH_URLS:
+        tried.append(doh)
+        try:
+            return attempt(doh)
+        except Exception as e:
+            last = e
+            time.sleep(0.4)
+    _log("%s：解析通道全部失败 %s" % (tag, tried))
+    raise RuntimeError(
+        "域名解析失败，已依次尝试 %d 个备用解析通道（DoH）仍未成功"
+        % len(DOH_URLS)) from None
+
+
+def _cr_get_dns_safe(url, **kw):
+    """带解析兜底的 GET（下载直链用）。
+
+    用法与 curl_cffi requests.get 一致（headers / stream / timeout / impersonate 原样透传）。
+    """
+    from curl_cffi import requests as cr
+
+    def attempt(doh):
+        if doh is None:
+            return cr.get(url, **kw)
+        return cr.get(url, doh_url=doh, **kw)
+
+    return _dns_fallback(attempt, tag="下载直链")
 
 
 def clean_version(v):
@@ -722,10 +782,10 @@ class AsusApi:
         self._chipset_tree = None
 
     def _get_json(self, url, retry=2):
-        """GET JSON；带 DNS 自愈：系统 DNS 解析失败时自动改用 DoH 兜底重试。
-        尝试序列：普通请求 retry 次 →（若为 DNS 错误）逐个 DoH 再试。"""
-        last = None
-        last_dns = False
+        """GET JSON；带解析兜底：系统 DNS 失败时自动改用 DoH 重试（见 _dns_fallback）。
+
+        v2.3.1：错误文案改为一句人话 —— 旧版把 curl 原文和 libcurl 帮助链接直接糊到状态栏。
+        """
         # referer / 语言：按目标域名区分（asus.com / asus.com.cn / rog.asus.com / odinapi）
         if "asus.com.cn" in url:
             ref, lang = CN_BASE + "/", "zh-CN,zh;q=0.9"
@@ -737,26 +797,18 @@ class AsusApi:
                 "Accept": "application/json,text/plain,*/*",
                 "Accept-Language": lang,
                 "Referer": ref}
-        n = retry + len(DOH_URLS)
-        for i in range(n):
-            if i >= retry and not last_dns:
-                break                 # 普通重试次数耗尽且并非 DNS 错误 → 不再多试
-            doh = DOH_URLS[i - retry] if i >= retry else None
-            with self._lock:
-                try:
-                    r = self._sess.get(url, headers=hdrs, doh_url=doh)
-                    if r.status_code == 200:
-                        return r.json()
-                    last = "HTTP %s" % r.status_code
-                    last_dns = False
-                except Exception as e:
-                    last = repr(e)[:160]
-                    last_dns = _is_dns_error(e)
-            if i < n - 1:
-                time.sleep(0.5 * (i + 1))
-        if last_dns:
-            raise RuntimeError("网络 DNS 解析官网失败（已自动尝试备用解析仍不通）：%s" % last)
-        raise RuntimeError("请求失败: %s" % last)
+
+        def attempt(doh):
+            kw = {"headers": hdrs}
+            if doh is not None:
+                kw["doh_url"] = doh
+            with self._lock:            # curl_cffi Session 非线程安全，串行化
+                r = self._sess.get(url, **kw)
+            if r.status_code != 200:
+                raise RuntimeError("HTTP %s" % r.status_code)
+            return r.json()
+
+        return _dns_fallback(attempt, retry, tag=url)
 
     # ---------------- 芯片组分类树（SeriesFilter，一次拉取缓存）
     def get_chipset_codes(self):
@@ -1136,7 +1188,7 @@ def do_download(url, dest, progress_cb=None, cancel_event=None, expect_size=0):
     """流式下载到 dest.part，完成后改名；返回 (ok, path, err, sha256_local)
 
     注：curl_cffi 的 Response 不支持 `with` 上下文协议（区别于 requests），故手动 close。
-    v2.3.3：DNS 解析失败时自动走 DoH 兜底重试（dlcdnets.asus.com 华硕 CDN，可能解析故障）。
+    v2.3.0：DNS 解析失败时自动走 DoH 兜底重试（dlcdnets.asus.com 华硕 CDN，可能解析故障）。
     v2.0.2：新增 expect_size 交叉校验 —— HTTP 层面「Content-Length 与实际字节数一致」
     只能证明这次传输完整，不能证明拿到的就是官网那版 BIOS（CDN 半截镜像 / 中间缓存
     返回旧文件都满足前者）。官网面板的 FileSize 是独立来源，两者对不上就丢弃文件，
@@ -1348,6 +1400,8 @@ class App:
         self.catalog = None
         self.cat_updated = ""
         self._cat_running = False   # v2.0.2：目录刷新在途标志（重入保护）
+        self._cat_retry_id = None   # v2.3.1：待执行的自动重试（Tk after id）
+        self._cat_retry_n = 0       # v2.3.1：已排到第几次重试
         self.cfg = load_cfg()           # 用户设置（刷新间隔 / 显示范围 / 保存目录）
         # ---- 目录（v2.2.0 三栏：左=芯片组 / 中=型号）
         self.iid_board = {}         # 型号列表 iid -> board dict（含 slug/title/url/…）
@@ -3221,6 +3275,7 @@ class App:
         if self._cat_running:
             self._set_status("目录刷新已在进行中，请稍候…", "warn")
             return False
+        self._cancel_cat_retry()        # v2.3.1：手动/自动重试启动前撤销排队任务
         self._cat_running = True
         try:
             self.btn_cat_refresh.configure(state=tk.DISABLED)
@@ -3259,12 +3314,64 @@ class App:
     def _apply_catalog(self, cat, err):
         if cat is None:
             self.v_cat.set("目录加载失败")
-            self._set_status("目录更新失败：%s\n仍可使用本地缓存的型号。" % (err or ""))
+            self._cat_failed(err)
             return
         self.catalog = cat
         self.cat_updated = cat.get("updated", "")
+        self._cat_retry_n = 0
+        self._cancel_cat_retry()
         self._populate_tree()
         self._set_status("目录就绪：%d 款主板（%s 更新）" % (cat.get("total", 0), self.cat_updated))
+
+    # ---------------------------------------------- 目录更新失败的收尾（v2.3.1）
+    def _cat_failed(self, err):
+        """目录更新失败：说人话 + 交代缓存情况 + 排一次自动重试。
+
+        旧版只把异常原样贴进状态栏、然后就此作罢。而这类失败绝大多数是
+        路由器重连 / 运营商 DNS 抖动造成的十几秒窗口 —— 自动重试一次就过去了。
+        """
+        msg = err or "网络请求失败"
+        _log("目录更新失败: %s" % msg)
+        total = int((self.catalog or {}).get("total") or 0)
+        if total:
+            head = "目录更新失败：%s\n本地缓存的 %d 款型号可继续使用。" % (msg, total)
+        else:
+            head = "目录更新失败：%s\n首次使用需要联网建立目录。" % msg
+        delay = self._schedule_cat_retry()
+        if delay:
+            tail = "%d 秒后自动重试（第 %d/%d 次）" % (
+                delay, self._cat_retry_n, len(CAT_RETRY_DELAYS))
+        else:
+            tail = "已自动重试 %d 次仍未成功，请检查网络后点左栏 ↻ 重试。" % len(CAT_RETRY_DELAYS)
+        self._set_status(head + "\n" + tail, "err")
+
+    def _schedule_cat_retry(self):
+        """排下一次自动重试，返回等待秒数；已达上限或已有待执行任务则返回 0。"""
+        if self._cat_retry_id is not None or self._cat_retry_n >= len(CAT_RETRY_DELAYS):
+            return 0
+        delay = CAT_RETRY_DELAYS[self._cat_retry_n]
+        self._cat_retry_n += 1
+        try:
+            self._cat_retry_id = self.root.after(delay * 1000, self._cat_retry_fire)
+        except Exception:
+            self._cat_retry_id = None
+            return 0
+        return delay
+
+    def _cat_retry_fire(self):
+        self._cat_retry_id = None
+        if self._cat_running:       # 用户已经手动点过 ↻，别叠加
+            return
+        self._refresh_now()
+
+    def _cancel_cat_retry(self):
+        if self._cat_retry_id is None:
+            return
+        try:
+            self.root.after_cancel(self._cat_retry_id)
+        except Exception:
+            pass
+        self._cat_retry_id = None
 
     # ------------------------------------------------- 目录树列宽自适应（v2.1.1）
     def _px(self, text, fm):

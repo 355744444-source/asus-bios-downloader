@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-# PyInstaller spec - 华硕主板 BIOS 下载工具 v2.3.0
+# PyInstaller spec - 华硕主板 BIOS 下载工具 v2.3.1
 import os
 from PyInstaller.utils.hooks import collect_all
 

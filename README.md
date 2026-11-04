@@ -23,7 +23,8 @@
 | 一键下载 | 官方 CDN 直链，带进度条 / 速度 / 剩余时间 / 取消；支持 `Range` 断点续传 |
 | SHA-256 校验 | 下载完成自动与官网公布值比对，不一致明确告警 |
 | 自动目录 | 启动拉取全量在售型号并本地缓存（`asus_mb_catalog.json`），之后可离线浏览，按设置间隔自动刷新 |
-| DNS 自愈 | 系统 DNS 解析失败（curl error 6/28）时自动切 DoH（阿里 223.5.5.5 / 腾讯 DNSPod）重试 |
+| DNS 自愈 | 系统 DNS 解析失败（curl error 6/28）时自动切 DoH（阿里 223.5.5.5 / 腾讯 DNSPod）重试，通道逐个试完不中途放弃 |
+| 断网自恢复 | 目录更新失败后按 5 / 15 / 45 / 120 秒退避自动重试，覆盖路由器重连、睡眠唤醒后网络未就绪的窗口 |
 | 真·高 DPI | 声明 PerMonitorV2，全部度量按真实 DPI 换算，125% / 150% / 200% 原生渲染不发虚 |
 | 离线自检 | `--check` 无 GUI 跑通目录接口 / 目录构建 / BIOS 三路径 / 下载直链 |
 
@@ -41,7 +42,7 @@
 
 ## 运行
 
-**直接用**（无需 Python）：到 [Releases](https://github.com/355744444-source/asus-bios-downloader/releases/latest) 下载 `asus-bios-downloader-v2.3.0.exe`，双击运行。首次建目录需联网。
+**直接用**（无需 Python）：到 [Releases](https://github.com/355744444-source/asus-bios-downloader/releases/latest) 下载 `asus-bios-downloader-v2.3.1.exe`，双击运行。首次建目录需联网。
 
 **从源码跑**：
 
@@ -67,14 +68,18 @@ pyinstaller asus_bios_checker.spec --noconfirm --clean
 | 脚本 | 内容 |
 |---|---|
 | `_v_audit.py` | 源码态 **159 条**断言：三栏几何、详情面板契约、配色像素采样（PrintWindow 抓真实窗口，不用 `style.lookup` —— 它返回配置值不等于渲染值）、事件抑制、DPI 换算 |
-| `_v_frozen.py` | 打包态 **100 条**断言：产物版本资源、无旧版残留常量、冷目录 `--check` |
+| `_v_frozen.py` | 打包态 **101 条**断言：产物版本资源、无旧版残留常量、冷目录 `--check` |
 | `_probe_part.py` | 取消下载不残留半截 `.part` |
 | `_probe_cfg.py` | 目录未加载时的设置保存语义 |
+| `_probe_doh_chain.py` | 备用解析（DoH）链路不会被中途异常截断 |
+| `_probe_cat_retry.py` | 目录更新失败后的文案 / 自动重试调度 |
 
 ```bash
 python _v_audit.py            # → PASS 159 / FAIL 0
 python _probe_part.py
 python _probe_cfg.py
+python _probe_doh_chain.py
+python _probe_cat_retry.py
 ```
 
 `_probe_part.py`、`_probe_cfg.py` 是从真实缺陷反推的回归探针：修复前 `.part` 残留 1,000,000 字节，修复后目录为空。

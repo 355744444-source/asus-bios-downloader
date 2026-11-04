@@ -7,6 +7,7 @@
 """
 import io
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -18,6 +19,12 @@ EXE = os.path.join(HERE, "dist", "华硕主板BIOS下载工具.exe")
 SRC = os.path.join(HERE, "asus_bios_checker.py")
 RESULT = os.path.join(HERE, "_v_frozen_result.txt")
 FAST = "--fast" in sys.argv          # 只跑 1/2 段（第 3 段要联网跑自检，约 90s）
+
+# 版本号的唯一来源是 version_info.txt：升版只改那一处，门禁自动跟着走
+# （v2.3.1：之前这里把 2.3.0 写死在 3 处，每次发版都要回来手改，漏改就误报红）
+_vi = io.open(os.path.join(HERE, "version_info.txt"), encoding="utf-8").read()
+V4 = ".".join(re.search(r"filevers=\((\d+),(\d+),(\d+),(\d+)\)", _vi).groups())
+V = ".".join(V4.split(".")[:3])
 
 PASS, FAIL, LINES = [], [], []
 
@@ -93,7 +100,7 @@ if code is not None:
        "源码独有 %d 条: %r" % (len(lost_n), sorted(lost_n)[:8]))
     blob = "\n".join(p_str)
     for mark in ("_wrtest_", "PX_CACHE_MAX", "DL_SIZE_TOL", "BOARD_TITLE_GAP",
-                 "._wrtest", "save_dir", "cat_busy", "2.3.0"):
+                 "._wrtest", "save_dir", "cat_busy", V):
         ck("1.3 产物含当前版本标记 %s" % mark, (mark in blob) or (mark in p_nam))
     for mark in ("_remember_dir", "_atomic_write_text", "_tmp_path", "_spawn",
                  "_dir_writable", "_cat_busy", "_set_board_title", "_fit_board_title",
@@ -138,8 +145,9 @@ if code is not None:
         ck("1.4g 产物已无旧标识符 %s（按名字判）" % gone, gone not in p_nam)
     # 版本常量判据：要判「孤立的版本字符串常量」而非子串 —— 文档字符串里
     # 会合法地出现 "v2.0.1"~"v2.0.4"（记录历次改动），拿子串判会误报
-    ck("1.5 产物版本常量 = 2.3.0", "2.3.0" in p_str and "2.3.0" in s_str)
-    for old in ("2.0.1", "2.0.2", "2.0.3", "2.0.4", "2.0.5", "2.1.0", "2.2.0", "2.2.1"):
+    ck("1.5 产物版本常量 = %s" % V, V in p_str and V in s_str)
+    for old in ("2.0.1", "2.0.2", "2.0.3", "2.0.4", "2.0.5", "2.1.0", "2.2.0", "2.2.1",
+                "2.3.0"):
         ck("1.5b 产物无孤立的 %s 版本常量" % old, old not in p_str,
            "%s 出现在: %r" % (old, [x for x in p_str if x.strip() == old][:3]))
     ck("1.6 源码已无旧固定临时名写法", '_cfg_path() + ".tmp"' not in src)
@@ -176,7 +184,7 @@ if code is not None:
 
 # ---------------------------------------------------------------- 2 版本资源
 raw = io.open(EXE, "rb").read()
-for i, (s, label) in enumerate((("2.3.0.0", "FileVersion/ProductVersion"),
+for i, (s, label) in enumerate(((V4, "FileVersion/ProductVersion"),
                                 ("ASUS_MB_BIOS_Downloader", "InternalName"),
                                 ("江苏振远智能科技有限公司", "CompanyName")), 1):
     ck("2.%d 版本资源含 %s" % (i, label), s.encode("utf-16-le") in raw,
